@@ -5,6 +5,7 @@ Run:  Windows: tracker/.venv/Scripts/python tracker/tracker.py
 Preview window keys: c = calibrate (look straight ahead, relaxed face), r = reset calibration, q = quit.
 """
 import json
+import locale
 import math
 import os
 import socket
@@ -149,7 +150,21 @@ def start_mic():
         return None
 
 
+def neutral_ctype_locale():
+    """MediaPipe lowercases its internal names with the C library's locale-aware tolower(). Under a Turkish
+    locale (tr_TR) 'I' doesn't lowercase to 'i' (Turkish has a dotless 'ı'), so on Linux MediaPipe rejects its
+    own graph ("TAG:index:name is invalid ... Imagepreprocessinggraph"). Only character classification is
+    switched; Python strings, paths and number formatting are unaffected."""
+    for name in ("C.UTF-8", "C"):
+        try:
+            locale.setlocale(locale.LC_CTYPE, name)
+            return
+        except locale.Error:
+            pass
+
+
 def main():
+    neutral_ctype_locale()  # must run before MediaPipe builds its graph
     import cv2
     import mediapipe as mp
     from mediapipe.tasks.python import BaseOptions, vision
