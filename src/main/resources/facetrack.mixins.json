@@ -1,0 +1,9 @@
+{
+	"required": true,
+	"package": "dev.facetrack.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": ["HeadMixin"],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
