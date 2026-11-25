@@ -16,7 +16,19 @@ webcam + mic → tracker/tracker.py (MediaPipe) → UDP 127.0.0.1:39540 → Fabr
 - **Tongue:** hold **J** (rebindable under Controls → Miscellaneous). Webcam trackers can't see tongues.
 - **Head:** your real head's yaw, pitch and roll are added on top of where you're looking.
 
-Only you see it for now; there is no multiplayer sync yet. Press **F5** or open your inventory to see your face.
+Press **F5** or open your inventory to see your own face.
+
+## Multiplayer
+
+If the server has the mod, nearby players with the mod see your face too.
+- Your client sends your face 20 times a second while the tracker runs.
+- The server checks the values, rate-limits each player, and forwards your face only to players who can see you.
+- Their clients ease between updates so it looks smooth.
+
+Who needs what:
+- **Server:** the mod jar plus Fabric API.
+- **Players:** the mod to see faces, and the tracker only to show their own. Players without the mod can still join.
+- **Server without the mod:** only you see your face.
 
 ## Setup
 
@@ -33,7 +45,8 @@ tracker\.venv\Scripts\python tracker\tracker.py
 ```
 
 The tracker downloads the MediaPipe face model on first run. To play outside the dev environment, put
-`build\libs\facetrack-1.0.0.jar` (from `.\gradlew build`) and Fabric API into a Fabric 26.2 `mods` folder.
+the jar from [Releases](https://github.com/XanthumR/minecraft-facetracking-mod/releases), or `build\libs\` after
+`.\gradlew build`, and Fabric API into a Fabric 26.2 `mods` folder, on both the client and the server.
 
 ## Calibrating
 

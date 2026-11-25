@@ -2,7 +2,10 @@ package dev.facetrack;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.KeyMapping;
 import org.lwjgl.glfw.GLFW;
 import net.fabricmc.fabric.api.client.rendering.v1.LivingEntityRenderLayerRegistrationCallback;
@@ -32,42 +35,84 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 public class FaceTrack implements ClientModInitializer {
 	public static final Logger LOG = LoggerFactory.getLogger("facetrack");
 	public static final int PORT = 39540;
 	private static final long STALE_MS = 1000;
+	private static final float LOCAL_EASE = 40, REMOTE_EASE = 15; // per second; remote updates only arrive 20x/s
 
-	/**
-	 * 0 lidL, 1 lidR, 2 mouthOpen, 3 pucker (0..1), 4 yaw, 5 pitch, 6 roll (radians),
-	 * 7 browL, 8 browR (-1 frown .. 1 raised), 9 gazeX, 10 mouthWide (-1 narrow .. 1 wide),
-	 * 11 mouthShift, 12 cornerL, 13 cornerR (-1 down .. 1 up). Sideways values: positive = player's left (+x).
-	 * Replaced whole, never mutated.
-	 */
-	static final int VALUES = 14;
-	private static volatile float[] face = new float[VALUES];
-	private static volatile long lastPacket = 0;
+	/** Latest tracker values (FaceNet.VALUES long). Replaced whole, never mutated. Written by the UDP thread. */
+	private static volatile float[] trackerValues = new float[FaceNet.VALUES];
+	private static volatile long lastTrackerPacket = 0;
+	private static KeyMapping TONGUE_KEY;
 
-	/** True while the tracker is sending. */
-	public static boolean active() {
-		return System.currentTimeMillis() - lastPacket <= STALE_MS;
+	/** One player's face: where it's heading (target) and what's drawn this frame (shown, eased toward target). */
+	public static final class Face {
+		public final float[] shown = new float[FaceNet.N];
+		float[] target = new float[FaceNet.N];
+		long lastUpdate; // ms; the face disappears after STALE_MS without updates
+		private long lastFrame = System.nanoTime();
+
+		/** Eases shown toward target. rate = how fast (per second); call once per rendered frame. */
+		void step(float rate) {
+			long now = System.nanoTime();
+			float k = Math.min(1, (now - lastFrame) / 1e9F * rate);
+			lastFrame = now;
+			for (int i = 0; i < shown.length; i++) shown[i] += (target[i] - shown[i]) * k;
+		}
 	}
 
-	/** Latest face values, or all zeros if the tracker stopped sending. */
-	public static float[] face() {
-		return active() ? face : new float[VALUES];
+	private static final Face LOCAL = new Face();
+	private static final Map<Integer, Face> REMOTE = new HashMap<>(); // by entity id; render thread only
+
+	/** True while the local tracker is sending. */
+	static boolean trackerActive() {
+		return System.currentTimeMillis() - lastTrackerPacket <= STALE_MS;
 	}
 
-	/** True if this render state is the local player (only they get tracked; multiplayer sync not done yet). */
-	public static boolean isLocalPlayer(EntityRenderState state) {
-		var player = Minecraft.getInstance().player;
-		return player != null && state instanceof AvatarRenderState s && s.id == player.getId();
+	/** My face as it should look now: tracker values plus the tongue key. */
+	private static float[] localTarget() {
+		float[] f = Arrays.copyOf(trackerValues, FaceNet.N);
+		f[FaceNet.TONGUE] = TONGUE_KEY.isDown() ? 1 : 0;
+		return f;
+	}
+
+	/** The face to draw on this player, or null if they have none (no tracker / no updates lately). */
+	public static Face faceFor(EntityRenderState state) {
+		if (!(state instanceof AvatarRenderState s)) return null;
+		var me = Minecraft.getInstance().player;
+		if (me != null && s.id == me.getId()) {
+			if (!trackerActive()) return null;
+			LOCAL.target = localTarget();
+			return LOCAL;
+		}
+		Face f = REMOTE.get(s.id);
+		return f != null && System.currentTimeMillis() - f.lastUpdate <= STALE_MS ? f : null;
 	}
 
 	@Override
 	public void onInitializeClient() {
 		// Webcam trackers can't see a tongue, so it's a held key.
 		TONGUE_KEY = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.facetrack.tongue", GLFW.GLFW_KEY_J, KeyMapping.Category.MISC));
+
+		// Multiplayer: send my face every tick (20/s) if the server has the mod; receive everyone else's.
+		ClientTickEvents.END_CLIENT_TICK.register(client -> {
+			if (client.player != null && trackerActive() && ClientPlayNetworking.canSend(FaceNet.FaceUpload.TYPE)) {
+				ClientPlayNetworking.send(new FaceNet.FaceUpload(localTarget()));
+			}
+		});
+		ClientPlayNetworking.registerGlobalReceiver(FaceNet.FaceUpdate.TYPE, (payload, ctx) -> {
+			float[] values = FaceNet.sanitize(payload.values());
+			if (values == null) return;
+			Face f = REMOTE.computeIfAbsent(payload.entityId(), id -> new Face());
+			f.target = values;
+			f.lastUpdate = System.currentTimeMillis();
+		});
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(REMOTE::clear));
 
 		Thread t = new Thread(FaceTrack::receive, "facetrack-udp");
 		t.setDaemon(true);
@@ -92,8 +137,8 @@ public class FaceTrack implements ClientModInitializer {
 				socket.receive(p);
 				float[] f = parse(new String(p.getData(), 0, p.getLength(), StandardCharsets.US_ASCII));
 				if (f != null) {
-					face = f;
-					lastPacket = System.currentTimeMillis();
+					trackerValues = f;
+					lastTrackerPacket = System.currentTimeMillis();
 				}
 			}
 		} catch (Exception e) {
@@ -101,42 +146,20 @@ public class FaceTrack implements ClientModInitializer {
 		}
 	}
 
-	/** Packet: VALUES space-separated floats. Returns null on anything malformed. */
+	/** Tracker packet: FaceNet.VALUES space-separated floats. Returns null on anything malformed. */
 	static float[] parse(String msg) {
 		String[] parts = msg.trim().split("\\s+");
-		if (parts.length != VALUES) return null;
-		float[] f = new float[VALUES];
+		if (parts.length != FaceNet.VALUES) return null;
+		float[] f = new float[FaceNet.VALUES];
 		try {
-			for (int i = 0; i < VALUES; i++) f[i] = Float.parseFloat(parts[i]);
+			for (int i = 0; i < f.length; i++) f[i] = Float.parseFloat(parts[i]);
 		} catch (NumberFormatException e) {
 			return null;
 		}
-		for (int i = 0; i < VALUES; i++) {
-			if (!Float.isFinite(f[i])) return null;
-			if (i < 4) f[i] = clamp(f[i], 0, 1);
-			else if (i < 7) f[i] = clamp(f[i], -1.2f, 1.2f); // ~70 degrees max head turn
-			else f[i] = clamp(f[i], -1, 1);
-		}
-		return f;
-	}
-
-	private static float clamp(float v, float lo, float hi) {
-		return Math.max(lo, Math.min(hi, v));
+		return FaceNet.sanitize(f);
 	}
 
 	private static final Identifier WHITE = Identifier.fromNamespaceAndPath("facetrack", "textures/white.png");
-	private static KeyMapping TONGUE_KEY;
-	private static float tongue; // 0 in .. 1 out, eased toward the key state
-	private static long lastTongueNanos = System.nanoTime();
-
-	/** Eases the tongue in/out over ~0.1s. Called once per rendered frame. */
-	private static void updateTongue() {
-		long now = System.nanoTime();
-		float dt = (now - lastTongueNanos) / 1e9F;
-		lastTongueNanos = now;
-		float target = TONGUE_KEY.isDown() ? 1 : 0;
-		tongue += (target - tongue) * Math.min(1, dt * 15);
-	}
 
 	/**
 	 * One render pass per kind. Skin-textured parts sample a forehead pixel (tint darkens mouth/brows, lids stay
@@ -159,7 +182,7 @@ public class FaceTrack implements ClientModInitializer {
 
 	/** Draws eyelids, mouth and brows on top of the player's face, using the head's pose. */
 	static class FaceLayer extends RenderLayer<AvatarRenderState, PlayerModel> {
-		private final FaceModel[] models = java.util.Arrays.stream(Kind.values()).map(FaceModel::new).toArray(FaceModel[]::new);
+		private final FaceModel[] models = Arrays.stream(Kind.values()).map(FaceModel::new).toArray(FaceModel[]::new);
 
 		FaceLayer(RenderLayerParent<AvatarRenderState, PlayerModel> parent) {
 			super(parent);
@@ -167,8 +190,9 @@ public class FaceTrack implements ClientModInitializer {
 
 		@Override
 		public void submit(PoseStack pose, SubmitNodeCollector out, int light, AvatarRenderState state, float yRot, float xRot) {
-			if (state.isInvisible || !isLocalPlayer(state) || !active()) return;
-			updateTongue();
+			Face face = faceFor(state);
+			if (state.isInvisible || face == null) return;
+			face.step(face == LOCAL ? LOCAL_EASE : REMOTE_EASE); // once per frame, before the models read it
 			var skin = RenderTypes.entityCutout(state.skin.body().texturePath());
 			var plain = RenderTypes.entityCutout(WHITE);
 			int overlay = LivingEntityRenderer.getOverlayCoords(state, 0.0F);
@@ -240,7 +264,8 @@ public class FaceTrack implements ClientModInitializer {
 		@Override
 		public void setupAnim(AvatarRenderState state) {
 			super.setupAnim(state); // head rotation, crouch etc. (tracked head angles are added by HeadMixin)
-			float[] f = face();
+			Face face = faceFor(state);
+			float[] f = face != null ? face.shown : new float[FaceNet.N];
 			// Model -x is the player's right side.
 			eyeR.visible = eyeL.visible = kind == Kind.EYES;
 			pupilR.visible = pupilL.visible = kind == Kind.PUPILS;
@@ -255,7 +280,7 @@ public class FaceTrack implements ClientModInitializer {
 
 		/** All sizes in skin pixels. The default face's mouth is 4px wide. */
 		private void mouth(float[] f) {
-			float open = f[2], pucker = f[3], wide = f[10];
+			float open = f[2], pucker = f[3], wide = f[10], tongue = f[FaceNet.TONGUE];
 			float w = Math.clamp(4 * (1 + 0.3F * wide - 0.45F * pucker), 1.5F, 6);
 			float h = 0.4F + 1.8F * open + 0.6F * pucker + 0.6F * tongue; // closed = thin line; pucker = small "o"
 			float cx = 0.6F * f[11];

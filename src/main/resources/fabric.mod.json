@@ -5,8 +5,9 @@
 	"name": "Face Track",
 	"description": "Drives your player's face and head from a webcam face tracker.",
 	"license": "MIT",
-	"environment": "client",
+	"environment": "*",
 	"entrypoints": {
+		"main": ["dev.facetrack.FaceNet"],
 		"client": ["dev.facetrack.FaceTrack"]
 	},
 	"mixins": ["facetrack.mixins.json"],

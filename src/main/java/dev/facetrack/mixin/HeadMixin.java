@@ -11,17 +11,17 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Adds the tracked head rotation on top of where the player is looking. */
+/** Adds the tracked head rotation on top of where the player is looking (you or any tracked player nearby). */
 @Mixin(HumanoidModel.class)
 public class HeadMixin {
 	@Shadow @Final public ModelPart head;
 
 	@Inject(method = "setupAnim(Lnet/minecraft/client/renderer/entity/state/HumanoidRenderState;)V", at = @At("TAIL"))
 	private void facetrack$head(HumanoidRenderState state, CallbackInfo ci) {
-		if (!FaceTrack.isLocalPlayer(state)) return;
-		float[] f = FaceTrack.face();
-		head.yRot += f[4];
-		head.xRot += f[5];
-		head.zRot += f[6];
+		var face = FaceTrack.faceFor(state);
+		if (face == null) return;
+		head.yRot += face.shown[4];
+		head.xRot += face.shown[5];
+		head.zRot += face.shown[6];
 	}
 }
