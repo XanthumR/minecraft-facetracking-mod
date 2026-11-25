@@ -55,6 +55,8 @@ tracker\.venv\Scripts\python tracker\tracker.py
 Supported on x86_64 and ARM64 (aarch64) with glibc 2.28 or newer: Ubuntu 20.04+, Debian 10+, Fedora,
 Arch and so on.
 
+On Arch, use the [Arch Linux](#arch-linux) section below instead.
+
 **1. System packages** (Java 25, Python with venv, and PortAudio for the microphone):
 
 ```bash
@@ -63,9 +65,6 @@ sudo apt install openjdk-25-jdk python3 python3-venv libportaudio2
 
 # Fedora
 sudo dnf install java-25-openjdk-devel python3 portaudio
-
-# Arch
-sudo pacman -S jdk25-openjdk python portaudio
 ```
 
 If your distro doesn't package Java 25 yet, install [Temurin 25](https://adoptium.net/) instead.
@@ -96,6 +95,65 @@ tracker/.venv/bin/python tracker/tracker.py
 - **Preview window won't open on Wayland** (`Could not find the Qt platform plugin "wayland"`): run the
   tracker with `QT_QPA_PLATFORM=xcb tracker/.venv/bin/python tracker/tracker.py`.
 - **No preview window at all** (headless or SSH): the tracker needs a desktop session to show its window.
+
+### Arch Linux
+
+For x86_64 Arch and Arch-based distros (EndeavourOS, Manjaro, CachyOS, ...). Arch's own Python 3.14 works,
+because every tracker dependency has a prebuilt package for it, so you don't need pyenv or an older Python.
+
+**1. Packages:**
+
+```bash
+sudo pacman -S --needed git jdk25-openjdk python portaudio v4l-utils
+```
+
+**2. Use Java 25.** Arch's default `jdk-openjdk` is a newer Java (27). The game runs on it, but this
+project builds against Java 25, so make 25 the default:
+
+```bash
+archlinux-java status                    # lists installed Java versions
+sudo archlinux-java set java-25-openjdk
+java -version                            # should say 25
+```
+
+If you'd rather keep Java 27 as your default, prefix the Gradle commands with
+`JAVA_HOME=/usr/lib/jvm/java-25-openjdk` instead.
+
+**3. Get the code and start the tracker:**
+
+```bash
+git clone https://github.com/XanthumR/minecraft-facetracking-mod.git
+cd minecraft-facetracking-mod
+python -m venv tracker/.venv
+tracker/.venv/bin/python -m pip install -r tracker/requirements.txt
+tracker/.venv/bin/python tracker/tracker.py
+```
+
+Don't install the Python packages with `pacman` or a system-wide `pip`. Arch blocks system-wide `pip`
+installs, which is why the tracker gets its own venv.
+
+**4. Run the game.** Either:
+- **Dev client:** `./gradlew runClient` in a second terminal.
+- **Your normal setup:** install [Prism Launcher](https://prismlauncher.org/) (`sudo pacman -S prismlauncher`)
+  and create a **26.2** instance with the **Fabric** loader. Add Fabric API and `facetrack-<version>.jar` from
+  [Releases](https://github.com/XanthumR/minecraft-facetracking-mod/releases) under Mods. Prism manages its
+  own Java, so step 2 only matters for `./gradlew`.
+
+**Arch troubleshooting:**
+- **Webcam:**
+  - `v4l2-ctl --list-devices` shows which `/dev/video*` number is your camera. Set `CAMERA` in
+    `tracker/tracker.py` to match; webcams often list two nodes, and the first one is the right one.
+  - Arch gives the logged-in desktop user camera access automatically through systemd-logind, so you
+    normally don't need the `video` group.
+- **Microphone not found or silent:**
+  - PortAudio talks to ALSA. On PipeWire (the Arch default), install `pipewire-alsa` so ALSA goes through
+    PipeWire; on PulseAudio, install `pulseaudio-alsa`.
+  - List devices with `tracker/.venv/bin/python -m sounddevice` and set `MIC_DEVICE` if the default is wrong.
+- **Preview window on Wayland** (Hyprland, Sway, KDE or GNOME on Wayland): OpenCV's window needs XWayland.
+  Run `QT_QPA_PLATFORM=xcb tracker/.venv/bin/python tracker/tracker.py`, and make sure XWayland is enabled
+  in your compositor (it is by default in KDE and GNOME).
+- **`./gradlew` fails with an "Unsupported class file major version" error:** Gradle is running on the
+  wrong Java. Redo step 2.
 
 ## Calibrating
 
