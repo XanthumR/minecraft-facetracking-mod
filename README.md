@@ -34,6 +34,12 @@ Who needs what:
 
 Requirements: Java 25, Python 3.12 or 3.13, a webcam, and optionally a microphone.
 
+The tracker downloads the MediaPipe face model on first run. To play outside the dev environment, put
+the jar from [Releases](https://github.com/XanthumR/minecraft-facetracking-mod/releases), or `build/libs/` after
+building, and Fabric API into a Fabric 26.2 `mods` folder, on both the client and the server.
+
+### Windows
+
 ```powershell
 # 1. Tracker
 py -3.13 -m venv tracker\.venv
@@ -44,9 +50,52 @@ tracker\.venv\Scripts\python tracker\tracker.py
 .\gradlew runClient
 ```
 
-The tracker downloads the MediaPipe face model on first run. To play outside the dev environment, put
-the jar from [Releases](https://github.com/XanthumR/minecraft-facetracking-mod/releases), or `build\libs\` after
-`.\gradlew build`, and Fabric API into a Fabric 26.2 `mods` folder, on both the client and the server.
+### Linux
+
+Supported on x86_64 and ARM64 (aarch64) with glibc 2.28 or newer: Ubuntu 20.04+, Debian 10+, Fedora,
+Arch and so on.
+
+**1. System packages** (Java 25, Python with venv, and PortAudio for the microphone):
+
+```bash
+# Debian / Ubuntu
+sudo apt install openjdk-25-jdk python3 python3-venv libportaudio2
+
+# Fedora
+sudo dnf install java-25-openjdk-devel python3 portaudio
+
+# Arch
+sudo pacman -S jdk25-openjdk python portaudio
+```
+
+If your distro doesn't package Java 25 yet, install [Temurin 25](https://adoptium.net/) instead.
+Check with `java -version`.
+
+**2. Tracker:**
+
+```bash
+python3 -m venv tracker/.venv
+tracker/.venv/bin/python -m pip install -r tracker/requirements.txt
+tracker/.venv/bin/python tracker/tracker.py
+```
+
+**3. Game** (second terminal):
+
+```bash
+./gradlew runClient
+```
+
+**Linux troubleshooting:**
+- **`Could not open camera 0`:**
+  - Check that the webcam shows up: `ls /dev/video*`.
+  - Make sure your user can use it: `sudo usermod -aG video $USER`, then log out and back in.
+  - Some webcams appear as several devices; try `CAMERA = 1` or `2` at the top of `tracker/tracker.py`.
+- **`Voice lip-sync off, could not open microphone` / `PortAudio library not found`:** install PortAudio
+  (step 1). To pick a specific mic, run `tracker/.venv/bin/python -m sounddevice` and set `MIC_DEVICE`
+  in `tracker.py` to its name or number. PipeWire and PulseAudio both work through the default device.
+- **Preview window won't open on Wayland** (`Could not find the Qt platform plugin "wayland"`): run the
+  tracker with `QT_QPA_PLATFORM=xcb tracker/.venv/bin/python tracker/tracker.py`.
+- **No preview window at all** (headless or SSH): the tracker needs a desktop session to show its window.
 
 ## Calibrating
 

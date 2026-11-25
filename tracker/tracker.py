@@ -1,6 +1,7 @@
 """Webcam face tracker -> Face Track Minecraft mod (UDP on localhost).
 
-Run:  tracker/.venv/Scripts/python tracker/tracker.py      (--test runs the self-check)
+Run:  Windows: tracker/.venv/Scripts/python tracker/tracker.py
+      Linux:   tracker/.venv/bin/python tracker/tracker.py         (add --test to run the self-check)
 Preview window keys: c = calibrate (look straight ahead, relaxed face), r = reset calibration, q = quit.
 """
 import json
@@ -39,7 +40,7 @@ MOUTH_SMOOTHING = 0.15  # the mouth gets less smoothing than the rest so fast sy
 # Voice lip-sync: the mouth opens with mic volume (combined with the webcam; whichever is more open wins).
 # Watch the "mic" dB in the preview: set QUIET just above your silence level, LOUD to your normal talking level.
 MIC_ENABLED = True
-MIC_DEVICE = None   # None = Windows default input; or a device name/number (python -m sounddevice lists them)
+MIC_DEVICE = None   # None = system default input; or a device name/number (python -m sounddevice lists them)
 MIC_QUIET_DB = -45  # at or below this the voice adds nothing (raise if background noise moves the mouth)
 MIC_LOUD_DB = -20   # at or above this the mouth is fully open
 
